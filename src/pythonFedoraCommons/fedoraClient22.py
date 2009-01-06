@@ -438,10 +438,17 @@ class FedoraClient(object):
     def doesDatastreamExist_REST(self, pid, dsid):
         # Let the fall through error on access dictate:
         url = self.getDatastreamUrl(pid, dsid)
+        # RSK fix
         try:
             response = urllib2.urlopen( url )
-            response.close()
-            return True
+            # fedora 2.2 responds with an empty document if datastream does not exist or access denied
+            # just read the beginning of the response to see if it is non-empty
+            if len(response.read(10)) == 0:	
+                response.close()
+                return False
+            else:
+                response.close()
+                return True
         except urllib2.HTTPError, exc:
             return False
         
@@ -497,3 +504,36 @@ class FedoraClient(object):
 #            datastreams.append(datastream)
 
         return datastreams
+
+
+## RSK additions
+
+    def listMethods_REST(self, pid, dateTime=None):
+        url = self.server + '/listMethods/' + pid + '?xml=true'
+        # leaving out dateTime for now...
+        try:
+            response = urllib2.urlopen( url )
+            xml_resp = response.read()
+
+            # try to parse xml
+            dom = minidom.parseString(xml_resp)
+            bdefList = {}
+            for node in dom.documentElement.childNodes:
+                if node.nodeName == 'bDef':
+                    methodlist = []
+                    for method in node.childNodes:
+                        methodlist.append(method.getAttribute('name'))
+                    bdefList[node.getAttribute('pid')] = methodlist
+            return bdefList
+        except urllib2.HTTPError, exc:
+            return exc.code
+
+    def getDissemination_REST(self, pid, bdef, method):
+        # leaving out dateTime & params for now
+        url = self.server + '/get/' + pid + '/' + bdef + '/' + method
+        try:
+            response = urllib2.urlopen( url )
+            return response.read()
+        except urllib2.HTTPError, exc:
+            return exc.code
+            
