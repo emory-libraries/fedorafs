@@ -1,0 +1,20 @@
+howto use:
+
+./FedoraFs.py /path/to/mountpoint
+
+
+current status of implementation:
+ - fedora server/port/username all hard-coded
+ - initial list of pids is hard-coded
+
+  directory structure:
+    pid		(object treated as directory)
+        .info (top-level properties)
+	datastreams
+	dissemination methods
+
+ - creation/modification time set for top-level of object but nothing else
+ - no caching implemented yet; filesize etc. is very inefficient and slow, 
+   esp. for objects with large datastreams
+
+ - currently only using REST interface and probably only works for Fedora 2.2
