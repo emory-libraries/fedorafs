@@ -33,20 +33,43 @@ class MyStat(fuse.Stat):
 
 class FedoraFS(fuse.Fuse):
     def __init__(self, *args, **kw):
+        # fedora-specific configuration parameters
+	# these are the defaults; can be overridden with command-line options
+        self.host = "localhost"
+        self.port = "8080"
+        self.username = "fedoraAdmin"
+        self.password = "fedoraAdmin"
+        self.version  = "2.2"
+        
         fuse.Fuse.__init__(self, *args, **kw)
 
+## wilson fedora22 pids
         self.pids = {"emory:8083" : "emory:8083",
                      "emory:8096" : "emory:8096",
                      "emory:80b9" : "emory:80b9",
                      "emory:bvrb" : "emory:bvrb",
                      "emory:8g4n" : "emory:8g4n",
-#                     "emory:8hfn" : "emory:8hfh",	## LARGE
+#                     "emory:8hfn" : "emory:8hfh",	## LARGE & slow
                      "emory:8h84" : "emory:8h84",
-                     }
-        self.files = {}
+                      }
+# dev11 fedora22 pids (NOT working)
+#         self.pids = {"changeme:104" : "changeme:104",
+#                      "changeme:105" : "changeme:105",
+#                      "changeme:114" : "changeme:114",
+#                      "changeme:119" : "changeme:119",
+#                      }
+	self.files = {}
         self.lastfiles = {}
+
+    def main(self, args=None):
+        # initialize fedora connection AFTER command line options have been parsed
         client = fedoraClient.ClientFactory()
-        self.fedora = client.getClient("http://wilson:6080/fedora", "fedoraAdmin", "fedoraAdmin", "2.2")
+        self.fedora = client.getClient("http://" + self.host + ":" + self.port + "/fedora",
+                                       self.username, self.password, self.version)
+        
+        fuse.Fuse.main(self, args)
+
+    
 
     def fedoratime(self, datetime):
         # parse fedora format date into date_struct, convert to unix time, then int
@@ -70,7 +93,7 @@ class FedoraFS(fuse.Fuse):
             # first level down is pid (1 path element, /pid)
             st.st_mode = stat.S_IFDIR | 0755
             #st.st_nlink = 2	# ?
-            profile = self.fedora.getObjectProfile(pe[0], "dom")
+            profile = self.fedora.getObjectProfile(pe[0], "python")
             st.st_ctime = self.fedoratime(profile['objCreateDate'])
             st.st_mtime = self.fedoratime(profile['objLastModDate'])
 
@@ -83,9 +106,11 @@ class FedoraFS(fuse.Fuse):
 
             methods = []
             methodlist = self.fedora.listMethods_REST(pid)
-            for bdef in methodlist.keys():
-                for method in methodlist[bdef]:
-                    methods.append(method.encode('ascii'))
+            if len(methodlist):
+                for bdef in methodlist.keys():
+                    for method in methodlist[bdef]:
+                        methods.append(method.encode('ascii'))
+
 
             if pe[1] == ".info":
                 st.st_mode = stat.S_IFREG | 0444
@@ -99,8 +124,11 @@ class FedoraFS(fuse.Fuse):
                 content = ''.join(lines)
 
                 st.st_size = len(content)
-            ## FIXME: this function seems to *always* return true... ?  (hacked..)
+            ## FIXME: this function seems to *always* return true... ?  (hacked/fixed..)
             elif self.fedora.doesDatastreamExist_REST(pid, pe[1]):
+                ## NOTE: if datastream exist but account does not have access,
+                ## it will be displayed as a zero-size file
+                
                 # display as a regular file
                 st.st_mode = stat.S_IFREG | 0444
                 st.st_nlink = 1
@@ -174,9 +202,10 @@ class FedoraFS(fuse.Fuse):
                 dirents.append(ds.encode('ascii'))
                 
             methodlist = self.fedora.listMethods_REST(pid)
-            for bdef in methodlist.keys():
-                for method in methodlist[bdef]:
-                    dirents.append(method.encode('ascii'))
+            if len(methodlist):
+                for bdef in methodlist.keys():
+                    for method in methodlist[bdef]:
+                        dirents.append(method.encode('ascii'))
         else:
             # Note use of path[1:] to strip the leading '/'
             # from the path, so we just get the printer name
@@ -204,9 +233,10 @@ class FedoraFS(fuse.Fuse):
 
         methods = []
         methodlist = self.fedora.listMethods_REST(pid)
-        for bdef in methodlist.keys():
-            for method in methodlist[bdef]:
-                methods.append(method.encode('ascii'))
+        if len(methodlist):
+            for bdef in methodlist.keys():
+                for method in methodlist[bdef]:
+                    methods.append(method.encode('ascii'))
 
         if pe[1] == ".info":
             profile = self.fedora.getObjectProfile(pid, "dom")
@@ -276,9 +306,17 @@ class FedoraFS(fuse.Fuse):
     
     def fsync(self, path, isfsyncfile):
         return 0
+
+    def fuseoptref(self):
+        fuse_args = fuse.FuseArgs()
+        fuse.args.optlist = {"host" : self.host,
+                             "port" : self.port,
+                             "username" : self.username,
+                             "password" : self.password,
+                             "version" : self.version}
+        return fuse_args
+
   
-
-
 
 def main():
     usage="""
@@ -287,7 +325,20 @@ def main():
     
     server = FedoraFS(version="%prog " + fuse.__version__,
                       usage=usage, dash_s_do='setsingle')
-    server.parse(errex=1)
+
+    # fedora-specific mount options
+    ## FIXME: could maybe use add_option_group function?
+    server.parser.add_option(mountopt="host", metavar="HOSTNAME", default=server.host,
+                             help="fedora server host name [default: %default]")
+    server.parser.add_option(mountopt="port", metavar="PORT", default=server.port,
+                             help="fedora server port number [default: %default]")
+    server.parser.add_option(mountopt="username", metavar="USER", default=server.username,
+                             help="fedora user [default: %default]")
+    server.parser.add_option(mountopt="password", metavar="PASSWORD", default=server.password,
+                             help="fedora password [default: %default]")
+    server.parser.add_option(mountopt="version", metavar="VERSION", default=server.version,
+                             help="version of fedora (2.2, 3.0) [default: %default]")
+    server.parse(values=server, errex=1)
     server.main()
     
 if __name__ == '__main__':
