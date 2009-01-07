@@ -45,6 +45,14 @@ from foxml import *
 class FedoraClient(object):
     def __init__(self, serverurl='http://localhost:8080/fedora', username='fedoraAdmin', password='fedoraAdmin', version="2.2"):
         self.server = serverurl
+
+        # initialize url opener *WITH* fedora user credentials
+        password_mgr = urllib2.HTTPPasswordMgrWithDefaultRealm()
+        password_mgr.add_password(None, self.server, username, password)
+        handler = urllib2.HTTPBasicAuthHandler(password_mgr)
+        self.url_opener = urllib2.build_opener(handler)
+
+
         
         #Choose which method of testing for object existance
         self.doesObjectExist = self.doesObjectExist_REST
@@ -104,7 +112,7 @@ class FedoraClient(object):
     def getListDatastreams(self, pid):
         url = self.server + '/listDatastreams/' + pid + '?xml=true'
         try:
-            response = urllib2.urlopen( url )
+            response = self.url_opener.open( url )
             return response.read()
         except urllib2.HTTPError, exc:
             return exc.code
@@ -121,7 +129,7 @@ class FedoraClient(object):
     def getDatastream(self, pid, ds):
         url = self.getDatastreamUrl(pid, ds)
         try:
-            response = urllib2.urlopen( url )
+            response = self.url_opener.open( url )
             return response.read()
         except urllib2.HTTPError, exc:
             return exc.code
@@ -131,7 +139,7 @@ class FedoraClient(object):
         url = self.getProfileUrl(pid)
         queryparams = urllib.urlencode({'xml' : 'true'})
         try:
-            response = urllib2.urlopen( url, queryparams )
+            response = self.url_opener.open( url, queryparams )
             xml_resp = response.read()
             if xml_resp:
                 if format=="xml":
@@ -170,7 +178,7 @@ class FedoraClient(object):
         url = self.server + '/describe'
         queryparams = urllib.urlencode({'xml' : 'true'})
         try:
-            response = urllib2.urlopen( url, queryparams )
+            response = self.url_opener.open( url, queryparams )
             xml_resp = response.read()
             if xml_resp:
                 if format=="xml":
@@ -198,7 +206,7 @@ class FedoraClient(object):
     def getDescription(self):
         url = self.server + '/describe'
         try:
-            response = urllib2.urlopen( url )
+            response = self.url_opener.open( url )
             return response.read()
         except urllib2.HTTPError, exc:
             return exc.code
@@ -446,7 +454,7 @@ class FedoraClient(object):
 #         url = self.getDatastreamUrl(pid, dsid)
 #         # RSK fix
 #         try:
-#             response = urllib2.urlopen( url )
+#             response = self.url_opener.open( url )
 #             # fedora 2.2 responds with an empty document if datastream does not exist or access denied
 #             # just read the beginning of the response to see if it is non-empty
 #             if len(response.read(10)) == 0:	
@@ -518,7 +526,7 @@ class FedoraClient(object):
         url = self.server + '/listMethods/' + pid + '?xml=true'
         # leaving out dateTime for now...
         try:
-            response = urllib2.urlopen( url )
+            response = self.url_opener.open( url )
             xml_resp = response.read()
 
             # try to parse xml
@@ -542,8 +550,40 @@ class FedoraClient(object):
         # leaving out dateTime & params for now
         url = self.server + '/get/' + pid + '/' + bdef + '/' + method
         try:
-            response = urllib2.urlopen( url )
+            response = self.url_opener.open( url )
             return response.read()
         except urllib2.HTTPError, exc:
             return exc.code
+
+
+        # very rudimentary find objects implementation...
+    def findObjects_REST(self, terms, max="10"):
+        url = self.server + "/search?terms=" + terms + "&maxResults=" + max + "&xml=true&pid=true"
+        try:
+            response = self.url_opener.open( url )
+            xml_resp = response.read()
+
+            pids = []
+            
+            # try to parse xml
+            try:
+                dom = minidom.parseString(xml_resp)
+            except:
+                return pids
+
+            for node in dom.getElementsByTagName("pid"):
+                pid = ""
+                # pid string in a text node (arg stupid dom)
+                if node.hasChildNodes():	
+                    for c in node.childNodes:
+                        pid += c.nodeValue
+                else:
+                    pid = node.nodeValue
+                pids.append(pid.encode('ascii'))
+
+            return pids
+                
+        except urllib2.HTTPError, exc:
+            return exc.code
+            
             
