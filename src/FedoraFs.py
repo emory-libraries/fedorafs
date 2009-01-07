@@ -191,7 +191,11 @@ class FedoraFS(fuse.Fuse):
         
         pe = path.split('/')[1:]
         if path == '/':
-            dirents.extend(self.pids.keys())
+            pids = self.fedora.findObjects_REST("*")
+            if len(pids):
+                dirents.extend(pids)
+            else:
+                dirents.extend(self.pids.keys())
         elif len(pe) == 1:
             pid = pe[0]
             dirents.append(".info")
