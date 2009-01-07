@@ -44,20 +44,9 @@ class FedoraFS(fuse.Fuse):
         fuse.Fuse.__init__(self, *args, **kw)
 
 ## wilson fedora22 pids
-        self.pids = {"emory:8083" : "emory:8083",
-                     "emory:8096" : "emory:8096",
-                     "emory:80b9" : "emory:80b9",
-                     "emory:bvrb" : "emory:bvrb",
-                     "emory:8g4n" : "emory:8g4n",
-#                     "emory:8hfn" : "emory:8hfh",	## LARGE & slow
-                     "emory:8h84" : "emory:8h84",
-                      }
-# dev11 fedora22 pids (NOT working)
-#         self.pids = {"changeme:104" : "changeme:104",
-#                      "changeme:105" : "changeme:105",
-#                      "changeme:114" : "changeme:114",
-#                      "changeme:119" : "changeme:119",
-#                      }
+        self.pids = ["emory:8083", "emory:8096", "emory:80b9", "emory:bvrb", "emory:8g4n",
+#                     "emory:8hfn",	## contains LARGE files & is very slow
+                     "emory:8h84"]
 	self.files = {}
         self.lastfiles = {}
 
@@ -195,7 +184,7 @@ class FedoraFS(fuse.Fuse):
             if len(pids):
                 dirents.extend(pids)
             else:
-                dirents.extend(self.pids.keys())
+                dirents.extend(self.pids)
         elif len(pe) == 1:
             pid = pe[0]
             dirents.append(".info")
