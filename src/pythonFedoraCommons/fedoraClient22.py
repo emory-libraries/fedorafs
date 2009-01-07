@@ -436,21 +436,27 @@ class FedoraClient(object):
 
         return False
     def doesDatastreamExist_REST(self, pid, dsid):
-        # Let the fall through error on access dictate:
-        url = self.getDatastreamUrl(pid, dsid)
-        # RSK fix
-        try:
-            response = urllib2.urlopen( url )
-            # fedora 2.2 responds with an empty document if datastream does not exist or access denied
-            # just read the beginning of the response to see if it is non-empty
-            if len(response.read(10)) == 0:	
-                response.close()
-                return False
-            else:
-                response.close()
-                return True
-        except urllib2.HTTPError, exc:
-            return False
+        # this is a better check, since datastreams may exist but access is not allowed
+        dslist = self.listDatastreams_REST(pid)
+        # convert unicode datastream names to ascii
+        return dslist.keys().__contains__(dsid)
+
+## old version of code
+#         # Let the fall through error on access dictate:
+#         url = self.getDatastreamUrl(pid, dsid)
+#         # RSK fix
+#         try:
+#             response = urllib2.urlopen( url )
+#             # fedora 2.2 responds with an empty document if datastream does not exist or access denied
+#             # just read the beginning of the response to see if it is non-empty
+#             if len(response.read(10)) == 0:	
+#                 response.close()
+#                 return False
+#             else:
+#                 response.close()
+#                 return True
+#         except urllib2.HTTPError, exc:
+#             return False
         
 
     def listDatastreams_SOAP(self, pid):
@@ -516,7 +522,11 @@ class FedoraClient(object):
             xml_resp = response.read()
 
             # try to parse xml
-            dom = minidom.parseString(xml_resp)
+            try:
+                dom = minidom.parseString(xml_resp)
+            except:
+                return []
+            
             bdefList = {}
             for node in dom.documentElement.childNodes:
                 if node.nodeName == 'bDef':
