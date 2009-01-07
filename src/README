@@ -21,3 +21,11 @@ current status of implementation:
    esp. for objects with large datastreams
 
  - currently only using REST interface and probably only works for Fedora 2.2
+
+
+prerequisites:
+
+ - FUSE kernel module (or other OS support)
+ - Python FUSE support (python-fuse)
+ - Python Zolera Soap Infrastructure (python-zsi)
+ - Python ElementTree (easy_install ElementTree)
