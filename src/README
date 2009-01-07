@@ -2,10 +2,13 @@ howto use:
 
 ./FedoraFs.py /path/to/mountpoint
 
+ can also specify fedora connection options: host, port, username, password, version
+ these are all listed in the fuse help you see when you run ./FedoraFs.py -h
 
 current status of implementation:
  - fedora server/port/username all hard-coded
- - initial list of pids is hard-coded
+ - contents of top-level directory are based on pids found if
+   findObjects is working  (falls back to hard-coded list of pids used for testing)
 
   directory structure:
     pid		(object treated as directory)
