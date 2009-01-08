@@ -15,12 +15,15 @@ current status of implementation:
         .info (top-level properties)
 	datastreams
 	dissemination methods
+	relations to other fedora objects (directory)
+	   pid (symlink to top-level object)
 
  - creation/modification time set for top-level of object but nothing else
  - no caching implemented yet; filesize etc. is very inefficient and slow, 
    esp. for objects with large datastreams
 
  - currently only using REST interface and probably only works for Fedora 2.2
+ - relations to other objects requires risearch 
 
 
 prerequisites:
