@@ -13,7 +13,7 @@ import fuse
 from time import *	# workaround for strptime
 from subprocess import *
 
-from pythonFedoraCommons import fedoraClient
+from pythonFedoraCommons import fedoraClient,risearch
 
 fuse.fuse_python_api = (0, 2)
 
@@ -56,6 +56,7 @@ class FedoraFS(fuse.Fuse):
         self.fedora = client.getClient("http://" + self.host + ":" + self.port + "/fedora",
                                        self.username, self.password, self.version)
         
+        self.ri = risearch.Risearch("http://" + self.host + ":" + self.port + "/fedora")
         fuse.Fuse.main(self, args)
 
     
@@ -73,6 +74,8 @@ class FedoraFS(fuse.Fuse):
         st = MyStat()
         # access time is now 
 #        st.st_atime = int(time())
+
+        ## FIXME: stat type specifier could also be S_IFLNK -- for symlink ?
         
         if path == '/':
             st.st_mode = stat.S_IFDIR | 0755
@@ -82,6 +85,8 @@ class FedoraFS(fuse.Fuse):
             # first level down is pid (1 path element, /pid)
             st.st_mode = stat.S_IFDIR | 0755
             #st.st_nlink = 2	# ?
+            ## FIXME: number of links should be number of subdirs + 2 (?)
+            
             profile = self.fedora.getObjectProfile(pe[0], "python")
             st.st_ctime = self.fedoratime(profile['objCreateDate'])
             st.st_mtime = self.fedoratime(profile['objLastModDate'])
@@ -100,6 +105,11 @@ class FedoraFS(fuse.Fuse):
                     for method in methodlist[bdef]:
                         methods.append(method.encode('ascii'))
 
+            related = self.ri.getObjectRelations(pid)
+#            for relation in related.keys():
+#                dirents.append(relation)
+                
+                    
 
             if pe[1] == ".info":
                 st.st_mode = stat.S_IFREG | 0444
@@ -126,23 +136,35 @@ class FedoraFS(fuse.Fuse):
                 
                 content = self.fedora.getDatastream(pid, pe[1])
                 st.st_size = len(content)
-            elif methods.__contains__(pe[1]):
+            elif pe[1] in methods:
                 method = pe[1]
                 # display as a regular file
                 st.st_mode = stat.S_IFREG | 0444
                 st.st_nlink = 1
                 ## FIXME: dissemination creation/modification time?
                 ## FIXME2: this will be *really* slow (& inaccurate) for large datastreams...
+                ## (figure out how to enable fuse caching ... ?)
                 #def getDissemination_REST(self, pid, bdef, method):
 
                 for bdefpid in methodlist.keys():
-                    if methodlist[bdefpid].__contains__(method):
+                    if method in methodlist[bdefpid]:
                         bdef = bdefpid
                 content = self.fedora.getDissemination_REST(pid, bdef, method)
                 st.st_size = len(content)
+                
+            elif pe[1] in related.keys():
+                # relation - treat as a directory containing other objects
+                st.st_mode = stat.S_IFDIR | 0755
+                # for a directory, # of links should be subdirs + 2
+            	st.st_nlink = 2	+ len(related[pe[1]])
+
             else:
                 # no such file or directory
                 return -errno.ENOENT
+            
+        elif len(pe) == 3:
+            # third level item -- related object, e.g. pid/hasMember/relpid
+            st.st_mode = stat.S_IFLNK | 0755
 
         else:
             
@@ -177,6 +199,8 @@ class FedoraFS(fuse.Fuse):
 
     def readdir (self, path, offset):
         dirents = [ '.', '..' ]
+
+        ## FIXME: howto use offset for large directories ?
         
         pe = path.split('/')[1:]
         if path == '/':
@@ -186,9 +210,9 @@ class FedoraFS(fuse.Fuse):
             else:
                 dirents.extend(self.pids)
         elif len(pe) == 1:
+            # pid is a directory containing datastreams as files
             pid = pe[0]
             dirents.append(".info")
-            # pid is a directory containing datastreams as files
             dslist = self.fedora.listDatastreams_REST(pid)
             # convert unicode datastream names to ascii
             for ds in dslist.keys():
@@ -199,6 +223,17 @@ class FedoraFS(fuse.Fuse):
                 for bdef in methodlist.keys():
                     for method in methodlist[bdef]:
                         dirents.append(method.encode('ascii'))
+
+            # relations to other objects
+            related = self.ri.getObjectRelations(pid)
+            for relation in related.keys():
+                dirents.append(relation)
+                
+        elif len(pe) == 2:		# relation subdir
+            pid = pe[0]
+            related = self.ri.getObjectRelations(pid)
+            for obj in related[pe[1]]:
+                dirents.append(obj)
         else:
             # Note use of path[1:] to strip the leading '/'
             # from the path, so we just get the printer name
@@ -239,10 +274,10 @@ class FedoraFS(fuse.Fuse):
             str = ''.join(lines).encode('ascii')
         elif self.fedora.doesDatastreamExist_REST(pid, pe[1]):
             str = self.fedora.getDatastream(pid, pe[1])
-        elif methods.__contains__(pe[1]):
+        elif pe[1] in methods:
             method = pe[1]
             for bdefpid in methodlist.keys():
-                if methodlist[bdefpid].__contains__(method):
+                if method in methodlist[bdefpid]:
                     bdef = bdefpid
             str = self.fedora.getDissemination_REST(pid, bdef, method)
 
@@ -263,6 +298,14 @@ class FedoraFS(fuse.Fuse):
         #    self.lastfiles[pe[0]] += d
         #return contents[offset:offset+size]
         #return self.lastfiles[pe[0]][offset:offset+size]
+
+    def readlink(self, path):
+        # for now, the only symlinks supported are relation/pid
+        pe = path.split('/')
+        pid = pe[-1]	#  last element is pid - link to top-level pid entry
+        newpath = "../../" + pid
+        return newpath
+
     
     def write(self, path, buf, offset):
         pe = path.split('/')[1:]        # Path elements 0 = printer 1 = file
