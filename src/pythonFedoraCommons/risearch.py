@@ -243,6 +243,42 @@ class Risearch(object):
         
         return g
 
+    # return a list of all related fedora objects
+    def getRelatedObjects(self, pid):
+        graph = self.getTriplesGraph(pid)
+        # all related objects (not just fedora objects)
+        objects = graph.objects()
+        rels = []
+        for obj in objects:
+            m = re.search("^info:fedora/([^\/]+)$", obj)
+            if m:
+                relpid = m.group(1)
+                rels.append(relpid.encode('ascii'))
+        return rels
+
+    def getObjectRelations(self, pid):
+        objects = self.getRelatedObjects(pid)
+        graph = self.getTriplesGraph(pid)
+        relation = {}
+        for obj in objects:
+            tuples = graph.triples([rdflib.URIRef("info:fedora/" + pid),
+                                    None, rdflib.URIRef("info:fedora/" + obj)])
+            for t in tuples:
+                # second element is the predicate in s,p,o
+                # short-hand name is at the end, e.g. relations-external#hasMember
+                m = re.search(".*#(.+)$", t[1])
+                rel = m.group(1).encode('ascii')
+                if rel in relation:
+                    relation[rel].append(obj)
+                else:
+                    relation[rel] = [obj]
+        return relation
+                
+                
+        
+                
+            
+
 class Sink(object):
     def __init__(self, g):
         self.length = 0
