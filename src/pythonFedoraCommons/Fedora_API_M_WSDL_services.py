@@ -244,8 +244,7 @@ class Fedora_API_M_Binding_SOAPHTTPSOAP:
         # no input wsaction
         self.binding.Send(None, None, request, soapaction="http://www.fedora.info/definitions/1/0/api/#getDatastream", **kw)
         # no output wsaction
-        response = self.binding.Receive(getDatastreamResponse.typecode)
-        return response
+        return self.binding.Receive(getDatastreamResponse.typecode)
 
     # op: getDatastreams
     def getDatastreams(self, request):

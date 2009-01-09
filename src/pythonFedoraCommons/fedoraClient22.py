@@ -235,6 +235,7 @@ class FedoraClient(object):
         request = getDatastreamRequest()
         request._pid = id
         request._dsID = dsid
+        request._altIDs =  self.getBlankAltIDs()
         if asOfDateTime:
             request._asOfDateTime = asOfDateTime
             
@@ -571,8 +572,8 @@ class FedoraClient(object):
 
 
         # very rudimentary find objects implementation...
-    def findObjects_REST(self, terms, max="500"):
-        url = self.server + "/search?terms=" + terms + "&maxResults=" + max + "&xml=true&pid=true"
+    def findObjects_REST(self, terms, max=500):
+        url = self.server + "/search?terms=" + terms + "&maxResults=" + str(max) + "&xml=true&pid=true"
         try:
             response = self.url_opener.open( url )
             xml_resp = response.read()
