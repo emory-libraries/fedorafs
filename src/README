@@ -17,6 +17,9 @@ current status of implementation:
 	dissemination methods
 	relations to other fedora objects (directory)
 	   pid (symlink to top-level object)
+ 	.versions  
+	   timestamp (one for each revision in object history)
+		datastreams as of datetime
 
  - creation/modification time set for top-level of object but nothing else
  - no caching implemented yet; filesize etc. is very inefficient and slow, 
