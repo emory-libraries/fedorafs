@@ -43,10 +43,11 @@ class FedoraFS(fuse.Fuse):
         
         fuse.Fuse.__init__(self, *args, **kw)
 
-## wilson fedora22 pids
-        self.pids = ["emory:8083", "emory:8096", "emory:80b9", "emory:bvrb", "emory:8g4n",
-#                     "emory:8hfn",	## contains LARGE files & is very slow
-                     "emory:8h84"]
+## wilson fedora22 pids (find not working for some reason)
+        self.testpids =  ["emory:8083", "emory:8096", "emory:80b9", "emory:bvrb", "emory:8g4n",
+#                         "emory:8hfn",	## contains LARGE files & is very slow
+                          "emory:8h84"]
+        self.pids = []
 	self.files = {}
         self.lastfiles = {}
 
@@ -68,35 +69,44 @@ class FedoraFS(fuse.Fuse):
 
     def getattr(self, path):
         pe = path.split('/')[1:]
-        #st.st_mtime = st.st_atime
-        #st.st_ctime = st.st_atime
 
         st = MyStat()
-        # access time is now 
-#        st.st_atime = int(time())
+        # access time defaults to now 
 
-        ## FIXME: stat type specifier could also be S_IFLNK -- for symlink ?
+        ## FIXME: add some generic parse/path stuff here (could also be used in read func)
+
+        if len(pe):
+            pid = pe[0]
+            
+
         
         if path == '/':
             st.st_mode = stat.S_IFDIR | 0755
-            st.st_nlink = 2
+            # for a directory, number of links should be subdirs + 2
+            # make sure pid list is up-to-date before calculating
+            self.getpids()
+            st.st_nlink = 2 + len(self.pids)
 
         elif len(pe) == 1:
             # first level down is pid (1 path element, /pid)
             st.st_mode = stat.S_IFDIR | 0755
-            #st.st_nlink = 2	# ?
-            ## FIXME: number of links should be number of subdirs + 2 (?)
-            
-            profile = self.fedora.getObjectProfile(pe[0], "python")
-            st.st_ctime = self.fedoratime(profile['objCreateDate'])
-            st.st_mtime = self.fedoratime(profile['objLastModDate'])
+            # currently, only possible subdirs for an object are relations to other objects & .versions
+            related = self.ri.getObjectRelations(pid)
+            st.st_nlink = 2 + len(related.keys()) + 1
+
+            profile = self.fedora.getObjectProfile(pid, "dom")
+            if profile:
+                st.st_ctime = self.fedoratime(profile['objCreateDate'])
+                st.st_mtime = self.fedoratime(profile['objLastModDate'])
+
+
 
         elif len(pe) == 2:
-            pid = pe[0]
             # second level could be one of:
             #  	datastream 		e.g., /pid/DC
             #   top-level info  	      /pid/.info
             # 	dissemination		      /pid/getText
+            # 	relation (dir)		      /pid/hasMember
 
             methods = []
             methodlist = self.fedora.listMethods_REST(pid)
@@ -113,17 +123,13 @@ class FedoraFS(fuse.Fuse):
 
             if pe[1] == ".info":
                 st.st_mode = stat.S_IFREG | 0444
-                st.st_nlink = 1
+                st.st_size = len(self.info(pid))
                 
-                profile = self.fedora.getObjectProfile(pid, "dom")
-                str = "object info for " + pid
-                lines = [str]
-                for info in profile:
-                    lines.append(info + ": " + profile[info] + '\n' )
-                content = ''.join(lines)
-
-                st.st_size = len(content)
-            ## FIXME: this function seems to *always* return true... ?  (hacked/fixed..)
+            elif pe[1] == ".versions":
+                st.st_mode = stat.S_IFDIR | 0755
+                history = self.fedora.getObjectHistory(pid)
+                st.st_nlink = 2 + len(history)
+                
             elif self.fedora.doesDatastreamExist_REST(pid, pe[1]):
                 ## NOTE: if datastream exist but account does not have access,
                 ## it will be displayed as a zero-size file
@@ -164,37 +170,55 @@ class FedoraFS(fuse.Fuse):
             
         elif len(pe) == 3:
             # third level item -- related object, e.g. pid/hasMember/relpid
-            st.st_mode = stat.S_IFLNK | 0755
-
-        else:
+            # OR version changetime, e.g. pid/.versions/2008-11-01
+            if pe[1] == ".versions":
+                # treat as a directory
+                st.st_mode = stat.S_IFDIR | 0755
+                # how to determine nlink count ?
             
-            profile = self.fedora.getObjectProfile(pe[0], "dom")
-            st.st_ctime = self.fedoratime(profile['objCreateDate'])
-            st.st_mtime = self.fedoratime(profile['objLastModDate'])
-             
-            # treat as regular file?
+            else:
+                st.st_mode = stat.S_IFLNK | 0755
+
+        elif len(pe) == 4:
+            # fourth level item -- versioned part, e.g. pid/.versions/2008-11-01/DC
+
+            # FIXME: extend doesDatastreamExist function to use datetime stamp, check here
+
+            # display as a regular file
             st.st_mode = stat.S_IFREG | 0444
-            
             st.st_nlink = 1
-            #st.st_size = 0
+            ## FIXME: datastream creation/modification time?
+            ## FIXME2: this is *really* slow (& inaccurate) for large datastreams...
 
-            #ds = self.fedora.listDatastreams_REST(pe[0])
-            #buf = ""
-            #for d in ds:
-            #    buf += d + "\n"
-            ds = self.fedora.getListDatastreams(pe[0])
-            self.files[pe[0]] = ds
+            st.st_mtime = self.fedoratime(pe[-2])
+            content = self.fedora.getDatastream(pid, pe[-1], pe[-2])	# dsid, datetime
+            st.st_size = len(content)
             
-            st.st_size = len(ds)
-
-            
-
-            #str = 'Hello World!\n'
-            #st.st_size = len(str)
-
-            #return -errno.ENOENT
+        else:
+            return -errno.ENOENT
+        
         return st
 
+
+    def getpids(self):
+        # initialize list of pids for top-level directory, if not already done
+        if len(self.pids) == 0:
+            # only search if pid list has not already been populated
+            pids = self.fedora.findObjects_REST("*")
+            if len(pids):
+                self.pids = pids
+            else:
+                # fallback list of pids for testing (find not working)
+                self.pids = self.testpids
+        
+    
+    def info(self, pid):
+    # generate .info file contents based on what is in the object profile
+        profile = self.fedora.getObjectProfile(pid, "dom")
+        lines = ["object info for " + pid + "\n\n"]
+        for info in profile:
+            lines.append(info + ": " + profile[info] + '\n' )
+        return ''.join(lines).encode('ascii')
 
 
     def readdir (self, path, offset):
@@ -204,15 +228,19 @@ class FedoraFS(fuse.Fuse):
         
         pe = path.split('/')[1:]
         if path == '/':
-            pids = self.fedora.findObjects_REST("*")
-            if len(pids):
-                dirents.extend(pids)
-            else:
-                dirents.extend(self.pids)
+            self.getpids()	# make sure pid list is populated
+            dirents.extend(self.pids)
         elif len(pe) == 1:
             # pid is a directory containing datastreams as files
             pid = pe[0]
+
+            # if this pid was not in the list yet for some reason, add it  
+            if pid not in self.pids:
+                print "*** pid " + pid + " is not in self.pids, appending\n"
+                self.pids.append(pid)
+
             dirents.append(".info")
+            dirents.append(".versions")
             dslist = self.fedora.listDatastreams_REST(pid)
             # convert unicode datastream names to ascii
             for ds in dslist.keys():
@@ -229,11 +257,27 @@ class FedoraFS(fuse.Fuse):
             for relation in related.keys():
                 dirents.append(relation)
                 
-        elif len(pe) == 2:		# relation subdir
+        elif len(pe) == 2:		# relation subdir OR .versions subdir
             pid = pe[0]
-            related = self.ri.getObjectRelations(pid)
-            for obj in related[pe[1]]:
-                dirents.append(obj)
+
+            if pe[1] == ".versions":
+                history = self.fedora.getObjectHistory(pid)
+                dirents.extend(history)
+                
+            else:
+                related = self.ri.getObjectRelations(pid)
+                for obj in related[pe[1]]:
+                    dirents.append(obj)
+
+        elif len(pe) == 3:		# .versions/date subdir
+            pid = pe[0]
+            date = pe[2]
+
+            dslist = self.fedora.listDatastreams_REST(pid, date)
+            # convert unicode datastream names to ascii
+            for ds in dslist.keys():
+                dirents.append(ds.encode('ascii'))
+
         else:
             # Note use of path[1:] to strip the leading '/'
             # from the path, so we just get the printer name
@@ -259,28 +303,30 @@ class FedoraFS(fuse.Fuse):
         dsid = pe[1]
 
 
-        methods = []
-        methodlist = self.fedora.listMethods_REST(pid)
-        if len(methodlist):
-            for bdef in methodlist.keys():
-                for method in methodlist[bdef]:
-                    methods.append(method.encode('ascii'))
+        if len(pe) == 4:
+            # fourth level item -- versioned part, e.g. pid/.versions/2008-11-01/DC
+            # FIXME: extend doesDatastreamExist function to use datetime stamp, check here (?)
+            str = self.fedora.getDatastream(pid, pe[-1], pe[-2])	# dsid, datetime
 
-        if pe[1] == ".info":
-            profile = self.fedora.getObjectProfile(pid, "dom")
-            lines = ["object info for " + pid + "\n\n"]
-            for info in profile:
-                lines.append(info + ": " + profile[info] + '\n' )
-            str = ''.join(lines).encode('ascii')
-        elif self.fedora.doesDatastreamExist_REST(pid, pe[1]):
-            str = self.fedora.getDatastream(pid, pe[1])
-        elif pe[1] in methods:
-            method = pe[1]
-            for bdefpid in methodlist.keys():
-                if method in methodlist[bdefpid]:
-                    bdef = bdefpid
+        else:
+            methods = []
+            methodlist = self.fedora.listMethods_REST(pid)
+            if len(methodlist):
+                for bdef in methodlist.keys():
+                    for method in methodlist[bdef]:
+                        methods.append(method.encode('ascii'))
+
+            if pe[1] == ".info":
+                str = self.info(pid)
+            elif self.fedora.doesDatastreamExist_REST(pid, pe[1]):
+                str = self.fedora.getDatastream(pid, pe[1])
+            elif pe[1] in methods:
+                method = pe[1]
+                for bdefpid in methodlist.keys():
+                    if method in methodlist[bdefpid]:
+                        bdef = bdefpid
             str = self.fedora.getDissemination_REST(pid, bdef, method)
-
+            
         slen = len(str)
         if offset < slen:
             if offset + size > slen:
