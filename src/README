@@ -35,3 +35,6 @@ prerequisites:
  - Python FUSE support (python-fuse)
  - Python Zolera Soap Infrastructure (python-zsi)
  - Python ElementTree (easy_install ElementTree)
+
+   Instructions for installing prereqs need by python-fedoracommons 
+   http://code.google.com/p/python-fedoracommons/wiki/Prerequisites
