@@ -86,9 +86,9 @@ class FedoraClient(object):
                 text += node.nodeValue
         return text
         
-    def listDatastreams_REST(self, pid):
+    def listDatastreams_REST(self, pid, date=None):
         # From http://ora.ouls.ox.ac.uk:8080/fedora/listDatastreams/namespace:id?xml=true
-        xmllist = self.getListDatastreams(pid)
+        xmllist = self.getListDatastreams(pid, date)
         if not isinstance(xmllist, int):
             # try to parse xml, and respond with a dict of dsids and attributes
             dom = minidom.parseString(xmllist)
@@ -109,8 +109,11 @@ class FedoraClient(object):
             return xmllist
     
     
-    def getListDatastreams(self, pid):
-        url = self.server + '/listDatastreams/' + pid + '?xml=true'
+    def getListDatastreams(self, pid, date=None):
+        url = self.server + '/listDatastreams/' + pid
+        if date:
+            url += "/" + date
+        url += '?xml=true'
         try:
             response = self.url_opener.open( url )
             return response.read()
@@ -118,16 +121,20 @@ class FedoraClient(object):
             return exc.code
 
     # REST Url for a GET
-    def getDatastreamUrl(self, pid, ds):
-        return self.server + '/get/' + pid + '/'+ ds
+    def getDatastreamUrl(self, pid, ds, date=None):
+        url = self.server + '/get/' + pid + '/'+ ds
+        if date:
+            url += "/" + date
+        return url
+    
 
     # REST Url for a GET
     def getProfileUrl(self, pid):
         return self.server + '/get/' + pid
 
     # REST GET
-    def getDatastream(self, pid, ds):
-        url = self.getDatastreamUrl(pid, ds)
+    def getDatastream(self, pid, ds, date=None):
+        url = self.getDatastreamUrl(pid, ds, date)
         try:
             response = self.url_opener.open( url )
             return response.read()
@@ -557,7 +564,7 @@ class FedoraClient(object):
 
 
         # very rudimentary find objects implementation...
-    def findObjects_REST(self, terms, max="10"):
+    def findObjects_REST(self, terms, max="500"):
         url = self.server + "/search?terms=" + terms + "&maxResults=" + max + "&xml=true&pid=true"
         try:
             response = self.url_opener.open( url )
@@ -586,4 +593,35 @@ class FedoraClient(object):
         except urllib2.HTTPError, exc:
             return exc.code
             
-            
+    # REST GET (with ?xml=true)
+    def getObjectHistory(self, pid, format="python"):
+        # returns a list of dates when the object was changed
+        url = self.server + '/getObjectHistory/' + pid
+        queryparams = urllib.urlencode({'xml' : 'true'})
+        try:
+            response = self.url_opener.open( url, queryparams )
+            xml_resp = response.read()
+            if xml_resp:
+                if format=="xml":
+                    return xml_resp
+                else:
+                    dates = []
+                    # try to parse xml, and respond with a list of timestamps
+                    try:
+                        dom = minidom.parseString(xml_resp)
+                    except:
+                        return dates
+                    
+                    # get the datastream nodes out
+                    for node in dom.documentElement.childNodes:
+                        date = ""
+                        if node.hasChildNodes():	
+                            for c in node.childNodes:
+                                date += c.nodeValue
+                        else:
+                            date = node.nodeValue
+                        dates.append(date.encode('ascii'))
+                    return dates
+        except urllib2.HTTPError, exc:
+            return exc.code
+
