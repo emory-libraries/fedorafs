@@ -67,136 +67,182 @@ class FedoraFS(fuse.Fuse):
         # trimming off .000Z for simplicity
         return int(mktime(strptime(datetime[0:-5], "%Y-%m-%dT%H:%M:%S")))
 
-    def getattr(self, path):
-        pe = path.split('/')[1:]
 
-        st = MyStat()
-        # access time defaults to now 
-
-        ## FIXME: add some generic parse/path stuff here (could also be used in read func)
-
-        if len(pe):
-            pid = pe[0]
-            
-
+    def parsepath(self, path):
+        # path info to be populated and returned
+        info = {'date' : None}		# default to no date, will be set if versioned
         
         if path == '/':
+            info['mode'] = 'root'
+            return info
+        
+        path_els = path.split('/')[1:]
+
+        # fedora pid will always be the first element
+        info['pid'] = path_els[0]
+        # related required at top-level to get number of links for object dir
+        info['related'] = self.ri.getObjectRelations(info['pid'])
+        depth = len(path_els)
+
+        # first level down is object, e.g. /pid
+        if depth == 1:
+            info['mode'] = 'object'
+            # only information required is pid & related
+            # methodlist required for reading directory
+            info['methodlist'] =  self.fedora.listMethods_REST(info['pid'])
+            return info
+
+        # look for the simpler things first (no fedora lookups required)
+        if ".versions" in path:
+            if path_els[-1] == ".versions":
+                info['mode'] = "version_list"
+                return info
+            else:
+                info['date'] = path_els[2]
+
+            # get versioned methodlist
+            info['methodlist'] =  self.fedora.listMethods_REST(info['pid'], info['date'])
+                
+            if depth == 3:
+                # versioned view of the object
+                info['mode'] = "object"
+                return info
+        else:
+            # get unversioned methodlist
+            info['methodlist'] =  self.fedora.listMethods_REST(info['pid'])
+        
+
+        # if last element is .info, mode is object info (may or may not be versioned)
+        if path_els[-1] == ".info":
+            info['mode'] = 'info'
+            return info
+
+        # object component - versioned or unversioned - examples:
+        # 	/pid/DC or /pid/.versions/2008-01-01/DC	 - datastream
+        # 	/pid/getText or /pid/.versions/2008-01-01/getText  - method (dissemination)
+        # 	/pid/hasMember or /pid/.versions/2008-01-01/hasMember  - relation 
+        
+        if depth == 2 or depth == 4:
+            part = path_els[-1]
+            
+            if part in info['related'].keys():
+                info['mode'] = 'relation'
+                info['relation'] = part
+                return info
+
+            if self.fedora.doesDatastreamExist_REST(info['pid'], part):
+                info['mode'] = 'datastream'
+                info['dsid'] = part
+                return info
+
+            methods = []
+            if len(info['methodlist']):
+                for bdef in info['methodlist'].keys():
+                    for method in info['methodlist'][bdef]:
+                        methods.append(method.encode('ascii'))
+            if part in methods:
+                info['mode'] = 'method'
+                info['method'] = part
+                return info
+
+        # add related object  
+        if depth == 3:		# is this test sufficient ? actually check relation?
+            info['mode'] = "related_object"
+            info['rel_pid'] = path_els[-1]
+            
+        # probably shouldn't fall through to here if this is working properly... 
+        return info
+        
+
+    def getattr(self, path):
+        path_info = self.parsepath(path)
+
+        st = MyStat()	 # access time defaults to now
+
+
+        # if we are in a versioned view of the object, we know what the modified time should be...
+        if path_info['date']:
+            st.st_mtime = self.fedoratime(path_info['date'])
+
+        # top-level directory
+        if path_info['mode'] == "root":
             st.st_mode = stat.S_IFDIR | 0755
             # for a directory, number of links should be subdirs + 2
             # make sure pid list is up-to-date before calculating
             self.getpids()
             st.st_nlink = 2 + len(self.pids)
-
-        elif len(pe) == 1:
-            # first level down is pid (1 path element, /pid)
+            
+        elif path_info['mode'] == "object":
+            # NOTE: this handles both versioned and unversioned object view (mostly)
             st.st_mode = stat.S_IFDIR | 0755
             # currently, only possible subdirs for an object are relations to other objects & .versions
-            related = self.ri.getObjectRelations(pid)
-            st.st_nlink = 2 + len(related.keys()) + 1
+            # neither of these are applicable for a versioned view
+            if path_info['date'] == None:
+                st.st_nlink = 2 + len(path_info['related'].keys()) + 1
+            else:
+                st.st_nlink = 2
 
-            profile = self.fedora.getObjectProfile(pid, "dom")
+            # getting versioned view of object profile  (doesn't work properly in fedora2.2 ?)
+            profile = self.fedora.getObjectProfile(path_info['pid'], "dom", path_info['date'])
             if profile:
                 st.st_ctime = self.fedoratime(profile['objCreateDate'])
-                st.st_mtime = self.fedoratime(profile['objLastModDate'])
+                # only use last modified date from profile in unversioned view
+                if path_info['date'] == None:
+                    st.st_mtime = self.fedoratime(profile['objLastModDate'])
 
+        elif path_info['mode'] == "info":
+            st.st_mode = stat.S_IFREG | 0444
+            st.st_size = len(self.info(path_info['pid'], path_info['date']))
 
+        elif path_info['mode'] == "version_list":
+            # directory of revisions in the object's history
+            st.st_mode = stat.S_IFDIR | 0755
+            history = self.fedora.getObjectHistory(path_info['pid'])
+            st.st_nlink = 2 + len(history)
 
-        elif len(pe) == 2:
-            # second level could be one of:
-            #  	datastream 		e.g., /pid/DC
-            #   top-level info  	      /pid/.info
-            # 	dissemination		      /pid/getText
-            # 	relation (dir)		      /pid/hasMember
-
-            methods = []
-            methodlist = self.fedora.listMethods_REST(pid)
-            if len(methodlist):
-                for bdef in methodlist.keys():
-                    for method in methodlist[bdef]:
-                        methods.append(method.encode('ascii'))
-
-            related = self.ri.getObjectRelations(pid)
-#            for relation in related.keys():
-#                dirents.append(relation)
-                
-                    
-
-            if pe[1] == ".info":
-                st.st_mode = stat.S_IFREG | 0444
-                st.st_size = len(self.info(pid))
-                
-            elif pe[1] == ".versions":
-                st.st_mode = stat.S_IFDIR | 0755
-                history = self.fedora.getObjectHistory(pid)
-                st.st_nlink = 2 + len(history)
-                
-            elif self.fedora.doesDatastreamExist_REST(pid, pe[1]):
-                ## NOTE: if datastream exist but account does not have access,
-                ## it will be displayed as a zero-size file
-                
-                # display as a regular file
-                st.st_mode = stat.S_IFREG | 0444
-                st.st_nlink = 1
-                ## FIXME: datastream creation/modification time?
-                ## FIXME2: this is *really* slow (& inaccurate) for large datastreams...
-                
-                content = self.fedora.getDatastream(pid, pe[1])
-                st.st_size = len(content)
-            elif pe[1] in methods:
-                method = pe[1]
-                # display as a regular file
-                st.st_mode = stat.S_IFREG | 0444
-                st.st_nlink = 1
-                ## FIXME: dissemination creation/modification time?
-                ## FIXME2: this will be *really* slow (& inaccurate) for large datastreams...
-                ## (figure out how to enable fuse caching ... ?)
-                #def getDissemination_REST(self, pid, bdef, method):
-
-                for bdefpid in methodlist.keys():
-                    if method in methodlist[bdefpid]:
-                        bdef = bdefpid
-                content = self.fedora.getDissemination_REST(pid, bdef, method)
-                st.st_size = len(content)
-                
-            elif pe[1] in related.keys():
-                # relation - treat as a directory containing other objects
-                st.st_mode = stat.S_IFDIR | 0755
-                # for a directory, # of links should be subdirs + 2
-            	st.st_nlink = 2	+ len(related[pe[1]])
-
-            else:
-                # no such file or directory
-                return -errno.ENOENT
+        elif path_info['mode'] == "datastream":
+            ## NOTE: if datastream exist but account does not have access,
+            ## it will be displayed as a zero-size file
             
-        elif len(pe) == 3:
-            # third level item -- related object, e.g. pid/hasMember/relpid
-            # OR version changetime, e.g. pid/.versions/2008-11-01
-            if pe[1] == ".versions":
-                # treat as a directory
-                st.st_mode = stat.S_IFDIR | 0755
-                # how to determine nlink count ?
-            
-            else:
-                st.st_mode = stat.S_IFLNK | 0755
-
-        elif len(pe) == 4:
-            # fourth level item -- versioned part, e.g. pid/.versions/2008-11-01/DC
-
-            # FIXME: extend doesDatastreamExist function to use datetime stamp, check here
-
             # display as a regular file
             st.st_mode = stat.S_IFREG | 0444
             st.st_nlink = 1
             ## FIXME: datastream creation/modification time?
             ## FIXME2: this is *really* slow (& inaccurate) for large datastreams...
-
-            st.st_mtime = self.fedoratime(pe[-2])
-            content = self.fedora.getDatastream(pid, pe[-1], pe[-2])	# dsid, datetime
+            
+            content = self.fedora.getDatastream(path_info['pid'], path_info['dsid'], path_info['date'])
             st.st_size = len(content)
             
+        elif path_info['mode'] == "method":
+            # display as a regular file
+            st.st_mode = stat.S_IFREG | 0444
+            st.st_nlink = 1
+            ## FIXME: dissemination creation/modification time?
+            ## FIXME2: this will be *really* slow (& inaccurate) for large datastreams...
+            ## (figure out how to enable fuse caching ... ?)
+            #def getDissemination_REST(self, pid, bdef, method):
+            
+            for bdefpid in path_info['methodlist'].keys():
+                if path_info['method'] in path_info['methodlist'][bdefpid]:
+                    bdef = bdefpid
+            content = self.fedora.getDissemination_REST(path_info['pid'], bdef, path_info['method'],
+                                                        path_info['date'])
+            st.st_size = len(content)
+
+        elif path_info['mode'] == "relation":
+            # relation - treat as a directory containing other objects
+            st.st_mode = stat.S_IFDIR | 0755
+            # for a directory, # of links should be subdirs + 2
+            # count the number of objects related by the specified relationship
+            st.st_nlink = 2   + len(path_info['related'][path_info['relation']])
+
+        elif path_info['mode'] == "related_object":
+            st.st_mode = stat.S_IFLNK | 0755
+
         else:
+            # no such file or directory
             return -errno.ENOENT
-        
+            
         return st
 
 
@@ -212,9 +258,9 @@ class FedoraFS(fuse.Fuse):
                 self.pids = self.testpids
         
     
-    def info(self, pid):
+    def info(self, pid, date=None):
     # generate .info file contents based on what is in the object profile
-        profile = self.fedora.getObjectProfile(pid, "dom")
+        profile = self.fedora.getObjectProfile(pid, "dom", date)
         lines = ["object info for " + pid + "\n\n"]
         for info in profile:
             lines.append(info + ": " + profile[info] + '\n' )
@@ -225,66 +271,57 @@ class FedoraFS(fuse.Fuse):
         dirents = [ '.', '..' ]
 
         ## FIXME: howto use offset for large directories ?
-        
-        pe = path.split('/')[1:]
-        if path == '/':
+
+        path_info = self.parsepath(path)
+
+        if path_info['mode'] == 'root':
             self.getpids()	# make sure pid list is populated
             dirents.extend(self.pids)
-        elif len(pe) == 1:
+            
+        elif path_info['mode'] == "object":
+            # NOTE: this handles both versioned and unversioned object view (mostly)
             # pid is a directory containing datastreams as files
-            pid = pe[0]
 
             # if this pid was not in the list yet for some reason, add it  
-            if pid not in self.pids:
-                print "*** pid " + pid + " is not in self.pids, appending\n"
-                self.pids.append(pid)
+            if path_info['pid'] not in self.pids:
+                self.pids.append(path_info['pid'])
 
             dirents.append(".info")
-            dirents.append(".versions")
-            dslist = self.fedora.listDatastreams_REST(pid)
+            # if we are not in a versioned view of the object, add .version dir
+            if path_info['date'] == None:
+                dirents.append(".versions")
+                
+            dslist = self.fedora.listDatastreams_REST(path_info['pid'], path_info['date'])
             # convert unicode datastream names to ascii
             for ds in dslist.keys():
                 dirents.append(ds.encode('ascii'))
                 
-            methodlist = self.fedora.listMethods_REST(pid)
-            if len(methodlist):
-                for bdef in methodlist.keys():
-                    for method in methodlist[bdef]:
+            if len(path_info['methodlist']):
+                for bdef in path_info['methodlist'].keys():
+                    for method in path_info['methodlist'][bdef]:
                         dirents.append(method.encode('ascii'))
 
-            # relations to other objects
-            related = self.ri.getObjectRelations(pid)
-            for relation in related.keys():
-                dirents.append(relation)
+            # relations to other objects - *only* present in unversioned view (risearch not versioned)
+            if path_info['date'] == None:
+                for relation in path_info['related'].keys():
+                    dirents.append(relation)
+
+        elif path_info['mode'] == "version_list":
+            # .versions subdir
+            dirents.extend(self.fedora.getObjectHistory(path_info['pid']))
+
+        elif path_info['mode'] == "relation":
+            # relation subdir
+            for obj in path_info['related'][path_info['relation']]:
+                dirents.append(obj)
                 
-        elif len(pe) == 2:		# relation subdir OR .versions subdir
-            pid = pe[0]
-
-            if pe[1] == ".versions":
-                history = self.fedora.getObjectHistory(pid)
-                dirents.extend(history)
-                
-            else:
-                related = self.ri.getObjectRelations(pid)
-                for obj in related[pe[1]]:
-                    dirents.append(obj)
-
-        elif len(pe) == 3:		# .versions/date subdir
-            pid = pe[0]
-            date = pe[2]
-
-            dslist = self.fedora.listDatastreams_REST(pid, date)
-            # convert unicode datastream names to ascii
-            for ds in dslist.keys():
-                dirents.append(ds.encode('ascii'))
-
-        else:
-            # Note use of path[1:] to strip the leading '/'
-            # from the path, so we just get the printer name
-            dirents.extend(self.pids[path[1:]])
+        #else:
+            # FIXME: any other cases? shouldn't fall down to here...
             
         for r in dirents:
             yield fuse.Direntry(r)
+
+            
 
     def mknod(self, path, mode, dev):
         pe = path.split('/')[1:]        # Path elements 0 = printer 1 = file
@@ -298,34 +335,24 @@ class FedoraFS(fuse.Fuse):
         return 0
     
     def read(self, path, size, offset):
-        pe = path.split('/')[1:]        # Path elements 0 = pid 1 = dsid
-        pid = pe[0]
-        dsid = pe[1]
+        path_info = self.parsepath(path)
 
+        str = ""
+        
+        if path_info['mode'] == "info":
+            # get object info (may be versioned)
+            str = self.info(path_info['pid'], path_info['date'])
 
-        if len(pe) == 4:
-            # fourth level item -- versioned part, e.g. pid/.versions/2008-11-01/DC
-            # FIXME: extend doesDatastreamExist function to use datetime stamp, check here (?)
-            str = self.fedora.getDatastream(pid, pe[-1], pe[-2])	# dsid, datetime
+        if path_info['mode'] == "datastream":
+            str = self.fedora.getDatastream(path_info['pid'], path_info['dsid'], path_info['date'])
 
-        else:
-            methods = []
-            methodlist = self.fedora.listMethods_REST(pid)
-            if len(methodlist):
-                for bdef in methodlist.keys():
-                    for method in methodlist[bdef]:
-                        methods.append(method.encode('ascii'))
+        if path_info['mode'] == "method":
+            for bdefpid in path_info['methodlist'].keys():
+                if path_info['method'] in path_info['methodlist'][bdefpid]:
+                    bdef = bdefpid
+            str = self.fedora.getDissemination_REST(path_info['pid'], bdef, path_info['method'],
+                                                    path_info['date'])
 
-            if pe[1] == ".info":
-                str = self.info(pid)
-            elif self.fedora.doesDatastreamExist_REST(pid, pe[1]):
-                str = self.fedora.getDatastream(pid, pe[1])
-            elif pe[1] in methods:
-                method = pe[1]
-                for bdefpid in methodlist.keys():
-                    if method in methodlist[bdefpid]:
-                        bdef = bdefpid
-            str = self.fedora.getDissemination_REST(pid, bdef, method)
             
         slen = len(str)
         if offset < slen:
@@ -354,18 +381,13 @@ class FedoraFS(fuse.Fuse):
 
     
     def write(self, path, buf, offset):
-        pe = path.split('/')[1:]        # Path elements 0 = printer 1 = file
-        self.files[pe[1]] += buf
-        return len(buf)
-    
+#        pe = path.split('/')[1:]        # Path elements 0 = printer 1 = file
+#        self.files[pe[1]] += buf
+#        return len(buf)
+	return 0
+
+    ## FIXME: implementation? what needs to be done here?
     def release(self, path, flags):
-        pe = path.split('/')[1:]        # Path elements 0 = printer 1 = file
-        if len(self.files[pe[1]]) > 0:
-            lpr = Popen(['lpr -P ' + pe[0]], shell=True, stdin=PIPE)
-            lpr.communicate(input=self.files[pe[1]])
-            lpr.wait()
-            self.lastfiles[pe[1]] = self.files[pe[1]]
-            self.files[pe[1]] = ""      # Clear out string
         return 0
            
     def open(self, path, flags):
