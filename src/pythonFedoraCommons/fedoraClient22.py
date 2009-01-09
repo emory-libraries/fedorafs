@@ -129,8 +129,11 @@ class FedoraClient(object):
     
 
     # REST Url for a GET
-    def getProfileUrl(self, pid):
-        return self.server + '/get/' + pid
+    def getProfileUrl(self, pid, date=None):
+        url = self.server + '/get/' + pid
+        if date:
+            url += "/" + date
+        return url
 
     # REST GET
     def getDatastream(self, pid, ds, date=None):
@@ -142,8 +145,10 @@ class FedoraClient(object):
             return exc.code
 
     # REST GET (with ?xml=true)
-    def getObjectProfile(self, pid, format="xml"):
-        url = self.getProfileUrl(pid)
+    def getObjectProfile(self, pid, format="xml", date=None):
+        # NOTE: fedora2.2 doesn't seem to actually return correct
+        # versioned information but always gives the latest data...
+        url = self.getProfileUrl(pid, date)
         queryparams = urllib.urlencode({'xml' : 'true'})
         try:
             response = self.url_opener.open( url, queryparams )
@@ -553,9 +558,11 @@ class FedoraClient(object):
         except urllib2.HTTPError, exc:
             return exc.code
 
-    def getDissemination_REST(self, pid, bdef, method):
+    def getDissemination_REST(self, pid, bdef, method, date=None):
         # leaving out dateTime & params for now
         url = self.server + '/get/' + pid + '/' + bdef + '/' + method
+        if date:
+            url += "/" + date
         try:
             response = self.url_opener.open( url )
             return response.read()
