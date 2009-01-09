@@ -13,6 +13,9 @@ import fuse
 from time import *	# workaround for strptime
 from subprocess import *
 
+
+from UserString import MutableString
+
 from pythonFedoraCommons import fedoraClient,risearch
 
 fuse.fuse_python_api = (0, 2)
@@ -40,6 +43,8 @@ class FedoraFS(fuse.Fuse):
         self.username = "fedoraAdmin"
         self.password = "fedoraAdmin"
         self.version  = "2.2"
+
+        self.towrite = {}
         
         fuse.Fuse.__init__(self, *args, **kw)
 
@@ -207,7 +212,8 @@ class FedoraFS(fuse.Fuse):
             ## it will be displayed as a zero-size file
             
             # display as a regular file
-            st.st_mode = stat.S_IFREG | 0444
+            #st.st_mode = stat.S_IFREG | 0444
+            st.st_mode = stat.S_IFREG | 0777
             st.st_nlink = 1
             ## FIXME: datastream creation/modification time?
 
@@ -336,14 +342,9 @@ class FedoraFS(fuse.Fuse):
             
 
     def mknod(self, path, mode, dev):
-        pe = path.split('/')[1:]        # Path elements 0 = printer 1 = file
-        self.pids[pe[0]].append(pe[1])
-        self.files[pe[1]] = ""
-        self.lastfiles[pe[1]] = ""
         return 0
     
     def unlink(self, path):
-        pe = path.split('/')[1:]        # Path elements 0 = printer 1 = file
         return 0
     
     def read(self, path, size, offset):
@@ -376,16 +377,8 @@ class FedoraFS(fuse.Fuse):
         return buf
 
         
-        # 0 = pid
-        #ds = self.fedora.listDatastreams_REST(pe[0])
-        #self.lastfiles[pe[0]] = ""
-        #for d in ds:
-        #    self.lastfiles[pe[0]] += d
-        #return contents[offset:offset+size]
-        #return self.lastfiles[pe[0]][offset:offset+size]
-
     def readlink(self, path):
-        # for now, the only symlinks supported are relation/pid
+        # for now, the only symlinks supported are /pid/relation/relpid
         pe = path.split('/')
         pid = pe[-1]	#  last element is pid - link to top-level pid entry
         newpath = "../../" + pid
@@ -393,12 +386,28 @@ class FedoraFS(fuse.Fuse):
 
     
     def write(self, path, buf, offset):
-#        pe = path.split('/')[1:]        # Path elements 0 = printer 1 = file
-#        self.files[pe[1]] += buf
-#        return len(buf)
-	return 0
+        path_info = self.parsepath(path)
 
-    ## FIXME: implementation? what needs to be done here?
+        print "*** write: offset is " + str(offset) + ", buf is:\n" + str(buf) + "\n"
+        
+        # only unversioned datastreams can be modified
+        if path_info['mode'] != "datastream" or path_info['date'] != None:
+            return -errno.EPERM		# not permitted
+ 
+        # only handle xml datastreams for now
+        dsprofile = self.fedora.getDatastreamProfile(path_info['pid'], path_info['dsid'])
+        dsinfo = dsprofile._datastream
+        if dsinfo._controlGroup != "X":
+            return -errno.ENOSYS		# not implemented - for now (for simplicity)
+
+        if path not in self.towrite.keys():
+            if offset != 0:
+                return -errno.ENOSYS	# shouldn't start writing a file in the middle, right?
+            self.towrite[path] = MutableString()
+
+        self.towrite[path][offset:len(buf)] = buf
+        return len(buf)
+
     def release(self, path, flags):
         return 0
            
@@ -421,6 +430,32 @@ class FedoraFS(fuse.Fuse):
         return 0
     
     def fsync(self, path, isfsyncfile):
+        # FIXME: what does isfsyncfile do ?
+
+        # assuming if there is data to write, file should be written (?)
+        if path in self.towrite.keys():
+            contents = str(self.towrite[path])
+            print "*** contents is:\n"+ contents + "\n"
+
+            if contents:
+                path_info = self.parsepath(path)
+                dsprofile = self.fedora.getDatastreamProfile(path_info['pid'], path_info['dsid'])
+                dsinfo = dsprofile._datastream
+                
+                
+                response = self.fedora.modifyDSByValue(path_info['pid'], path_info['dsid'],
+                                                       dsinfo._altIDs, dsinfo._label, dsinfo._MIMEType,
+                                                       #dsinfo._formatURI,	 # why is this blank?
+                                                       "",	# using blank format uri (for now)
+                                                       contents,	# contents as string
+                                                       # checksumtype, checksum - ignoring for now 
+                                                       "DISABLED", "none",	
+                                                       "updated via fedorafs", 0)
+                if response._modifiedDate:
+                    print "*** " + path_info['pid'] + "/" + path_info['dsid'] + " datastream updated at " + response._modifiedDate + "\n"
+                    
+            del self.towrite[path]
+
         return 0
 
     def fuseoptref(self):
