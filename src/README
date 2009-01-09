@@ -18,10 +18,13 @@ current status of implementation:
 	relations to other fedora objects (directory)
 	   pid (symlink to top-level object)
  	.versions  
-	   timestamp (one for each revision in object history)
+	   datetime (one for each revision in object history)
+		.info (top-level properties - fedora 2.2 bug: always returns latest info)
 		datastreams as of datetime
+		dissemination methods  as of datetime
 
- - creation/modification time set for top-level of object but nothing else
+ - creation/modification time set for top-level of object but little else
+   - modification time for all versioned inferred from datetime in path
  - no caching implemented yet; filesize etc. is very inefficient and slow, 
    esp. for objects with large datastreams
 
