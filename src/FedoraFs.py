@@ -56,8 +56,10 @@ class FedoraFS(fuse.Fuse):
         client = fedoraClient.ClientFactory()
         self.fedora = client.getClient("http://" + self.host + ":" + self.port + "/fedora",
                                        self.username, self.password, self.version)
-        
-        self.ri = risearch.Risearch("http://" + self.host + ":" + self.port + "/fedora")
+
+        # FIXME: find a cleaner way to pass username/password for risearch?
+        self.ri = risearch.Risearch("http://" + self.username + ":" + self.password + "@"
+                                    + self.host + ":" + self.port + "/fedora")
         fuse.Fuse.main(self, args)
 
     
@@ -208,10 +210,20 @@ class FedoraFS(fuse.Fuse):
             st.st_mode = stat.S_IFREG | 0444
             st.st_nlink = 1
             ## FIXME: datastream creation/modification time?
-            ## FIXME2: this is *really* slow (& inaccurate) for large datastreams...
-            
-            content = self.fedora.getDatastream(path_info['pid'], path_info['dsid'], path_info['date'])
-            st.st_size = len(content)
+
+            # use API-M to get datastream info
+            dsprofile = self.fedora.getDatastreamProfile(path_info['pid'], path_info['dsid'], path_info['date'])
+            if dsprofile:
+                st.st_size = dsprofile._datastream._size
+                st.st_ctime = self.fedoratime(dsprofile._datastream._createDate.encode('ascii'))
+                # FIXME: does not return mtime;  use object mtime?
+                # ARGH: fedora apparently returns 0 size for managed datastreams ?
+                
+            if not(dsprofile) or st.st_size == 0:
+                # as fall-back only, get size from datastream itself
+                # Note that this very slow (& possibly inaccurate) for large datastreams
+                content = self.fedora.getDatastream(path_info['pid'], path_info['dsid'], path_info['date'])
+                st.st_size = len(content)
             
         elif path_info['mode'] == "method":
             # display as a regular file
