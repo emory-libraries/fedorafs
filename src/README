@@ -2,33 +2,35 @@ howto use:
 
 ./FedoraFs.py /path/to/mountpoint
 
- can also specify fedora connection options: host, port, username, password, version
- these are all listed in the fuse help you see when you run ./FedoraFs.py -h
+Can also specify fedora connection options: host, port, username, password, version
+These are all listed in the fuse help you see when you run ./FedoraFs.py -h
+
+Example usage:
+./FedoraFs.py -o base_url=http://dev11.library.emory.edu:8480/fedora -o user=login -o password= fedora/
+
+If password is specified but blank, you will be prompted to enter a password.
+
+Use -d when in development to see fuse debugging output, error messages, etc.
 
 current status of implementation:
- - fedora server/port/username all hard-coded
- - contents of top-level directory are based on pids found if
-   findObjects is working  (falls back to hard-coded list of pids used for testing)
 
   directory structure:
     pid		(object treated as directory)
         .info (top-level properties)
 	datastreams
 	dissemination methods
-	relations to other fedora objects (directory)
+	relations to other fedora objects (directory)   [** NOT YET REIMPLEMENTED]
 	   pid (symlink to top-level object)
  	.versions  
 	   datetime (one for each revision in object history)
 		.info (top-level properties - fedora 2.2 bug: always returns latest info)
 		datastreams as of datetime
-		dissemination methods  as of datetime
+		dissemination methods  as of datetime [** NOT YET REIMPLEMENTED]
 
  - creation/modification time set for top-level of object but little else
    - modification time for all versioned inferred from datetime in path
  - no caching implemented yet; filesize etc. is very inefficient and slow, 
    esp. for objects with large datastreams
-
- - currently only using REST interface and probably only works for Fedora 2.2
  - relations to other objects requires risearch 
 
 
@@ -36,8 +38,4 @@ prerequisites:
 
  - FUSE kernel module (or other OS support)
  - Python FUSE support (python-fuse)
- - Python Zolera Soap Infrastructure (python-zsi)
- - Python ElementTree (easy_install ElementTree)
-
-   Instructions for installing prereqs need by python-fedoracommons 
-   http://code.google.com/p/python-fedoracommons/wiki/Prerequisites
+ - python-eulcore fedora dependencies (see eulcore/README.dependencies)
