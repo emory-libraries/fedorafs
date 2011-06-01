@@ -3,9 +3,9 @@ import fuse
 import stat  
 from time import mktime
 
-from eulcore.fedora.models import DigitalObject
-from eulcore.fedora.util import parse_xml_object
-from eulcore.fedora.xml import ObjectDatastreams
+from eulfedora.models import DigitalObject
+from eulfedora.util import parse_xml_object
+from eulfedora.xml import ObjectDatastreams
 
 class FsStat(fuse.Stat):
     def __init__(self):
@@ -46,8 +46,10 @@ class FsObject(DigitalObject):
             # number of items in this directory
             # currently: datastreams, methods, .info
             st.st_nlink = 2 + len(self.ds_list) + 1 # info
-            st.st_ctime = int(mktime(self.info.created.timetuple()))
-            st.st_mtime = int(mktime(self.info.modified.timetuple()))
+            st.st_nlink += len(self.related_objects.keys())
+            if self.info:
+                st.st_ctime = int(mktime(self.info.created.timetuple()))
+                st.st_mtime = int(mktime(self.info.modified.timetuple()))
 
         elif els[0] == '.info':
             # .info - special case for supplying top-level object properties
@@ -130,7 +132,21 @@ class FsObject(DigitalObject):
             except Exception:
                 st.st_size = 0
                 st.st_mode = stat.S_IFREG | 0000
-        
+
+        elif els[0] in self.rel_shortnames:
+            # relation - at top level, directory of objects
+            if len(els) == 1:
+                # top-level of relation: list all related objects
+                st.st_mode = stat.S_IFDIR | 0444
+                st.st_nlink = 2 + len(self.related_objects[self.rel_shortnames[els[0]]])
+                # ?? how to determine creation/modification time for relation? rels-ext?
+                st.st_ctime = int(mktime(self.info.created.timetuple()))    
+                st.st_mtime = int(mktime(self.info.modified.timetuple()))
+
+            # related object - symlink to top-level object
+            if len(els) == 2:
+                st.st_mode = stat.S_IFLNK | 0755
+
         else:
             return -errno.ENOENT    # no such file or directory
 
@@ -163,6 +179,8 @@ class FsObject(DigitalObject):
 
             # add all datastreams - using datastream id for directory listing
             members.extend([str(dsid) for dsid in self.ds_list.keys()])
+            # relations to other objects - use short-hand rel names for directory names
+            members.extend(self.rel_shortnames)
 
             if not writable_only:
                 # add methods - using method name for directory listing
@@ -189,7 +207,12 @@ class FsObject(DigitalObject):
                 dsobj = parse_xml_object(ObjectDatastreams, data, url)
                 return [ str(ds.dsid) for ds in dsobj.datastreams ]
 
-        # TODO: related objects 
+        # related objects
+        elif els[0] in self.rel_shortnames:
+            # top level: directory with objects related by the specified short-name relation
+            if len(els) == 1:
+                rel_uri = self.rel_shortnames[els[0]]
+                members = self.related_objects[rel_uri]
 
         return members
 
@@ -206,7 +229,7 @@ class FsObject(DigitalObject):
             return diss
         elif els[0] in self.ds_list:
             # datastream content
-            # FIXME: somewhere a newline is getting prepended to datastream content
+            # FIXME: somewhere a newline is getting prepended to datastream content (?)
             data, url = self.api.getDatastreamDissemination(self.pid, els[0])
             return data
         
@@ -219,6 +242,8 @@ class FsObject(DigitalObject):
                 for dt in self.history:
                     if date == str(dt):
                         datetime = dt
+
+                # TODO: add caching? versioned ds content shouldn't change
                 data, url = self.api.getDatastreamDissemination(self.pid, dsid, datetime)
                 return data
 
@@ -237,3 +262,35 @@ class FsObject(DigitalObject):
         for field in ['label', 'owner', 'created', 'modified', 'state']:
             lines.append('%s:\t%s\n' % (field, getattr(self.info, field)))
         return ''.join(lines).encode('ascii')
+
+
+    
+    _rel_shortnames = None
+    @property
+    def rel_shortnames(self):
+        if self._rel_shortnames is None:
+            # initialize related objects & equivalent short names
+            self.related_objects
+        return self._rel_shortnames
+
+
+    _rel_objects = None
+    @property
+    def related_objects(self):
+        if self._rel_objects is None:
+            if self._rel_shortnames is None:
+                self._rel_shortnames = {}
+            self._rel_objects = {}
+            for subj, pred, obj in self.rels_ext.content:
+                if str(obj).startswith('info:fedora/'):
+                    rel = str(pred)
+                    if rel not in self._rel_objects:
+                        self._rel_objects[rel] = []
+                    # use short-hand pid instead of uri as link name
+                    self._rel_objects[rel].append(str(obj).replace('info:fedora/', ''))
+                    # generate a short-hand name to be used as directory
+                    # - for now, use the local relation predicate without namespace as directory name
+                    self._rel_shortnames[rel[rel.find('#')+1:]] = rel
+        return self._rel_objects
+            
+            

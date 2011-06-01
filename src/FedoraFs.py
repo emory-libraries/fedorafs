@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 import fuse
 from getpass import getpass
@@ -7,7 +7,7 @@ import errno
 import logging               
 from UserString import MutableString
 
-from eulcore.fedora.server import Repository
+from eulfedora.server import Repository
 
 from models import FsObject, FsStat
 
@@ -64,8 +64,8 @@ class FedoraFS(fuse.Fuse):
             found = self.repo.find_objects(terms=self.filter)
             if found:
                 self._members = {}
-                #for i in range(150):     #  ??? how to limit this reasonably?
-                for i in range(10):     #  ??? how to limit this reasonably?
+                for i in range(150):     #  ??? how to limit this reasonably?
+                #for i in range(10):     #  ??? how to limit this reasonably?
                     obj = found.next()
                     self._members[obj.pid] = obj
         return self._members
@@ -111,6 +111,7 @@ class FedoraFS(fuse.Fuse):
         logger.debug('read path=%s, size=%s, offset=%s' % (path, size, offset))
         path_els = path.strip('/').split('/')
 
+        # FIXME: not very efficient
         if path_els[0] in self.members:
             str = self.members[path_els[0]].fs_read(*path_els[1:])
 
@@ -188,6 +189,15 @@ class FedoraFS(fuse.Fuse):
 
     def rename(self, pathfrom, pathto):
         return 0
+
+    def readlink(self, path):
+        logger.debug('readlink path=%s' % path)
+        # for now, the only symlink in use is /pid/relation/pid
+        # FIXME: can we shift this logic to the model somehow?
+        els = path.split('/')
+        pid = els[-1]    #  last element is pid - link to top-level pid entry
+        newpath = "../../" + pid
+        return newpath
 
     def fuseoptref(self):
         fuse_args = fuse.FuseArgs()

@@ -1,4 +1,4 @@
-howto use:
+How to use:
 
 ./FedoraFs.py /path/to/mountpoint
 
@@ -6,9 +6,12 @@ Can also specify fedora connection options: host, port, username, password, vers
 These are all listed in the fuse help you see when you run ./FedoraFs.py -h
 
 Example usage:
-./FedoraFs.py -o base_url=http://dev11.library.emory.edu:8480/fedora -o user=login -o password= fedora/
+./FedoraFs.py -o base_url=http://fedora.server.edu:8080/fedora -o username=login -o password= fedora/
 
 If password is specified but blank, you will be prompted to enter a password.
+
+To unmount:
+  fusermount -u fedora/
 
 Use -d when in development to see fuse debugging output, error messages, etc.
 
@@ -19,23 +22,20 @@ current status of implementation:
         .info (top-level properties)
 	datastreams
 	dissemination methods
-	relations to other fedora objects (directory)   [** NOT YET REIMPLEMENTED]
+	relations to other fedora objects (directory) 
 	   pid (symlink to top-level object)
  	.versions  
 	   datetime (one for each revision in object history)
-		.info (top-level properties - fedora 2.2 bug: always returns latest info)
+		.info (top-level properties - but not actually versioned?)
 		datastreams as of datetime
-		dissemination methods  as of datetime [** NOT YET REIMPLEMENTED]
 
  - creation/modification time set for top-level of object but little else
    - modification time for all versioned inferred from datetime in path
- - no caching implemented yet; filesize etc. is very inefficient and slow, 
-   esp. for objects with large datastreams
- - relations to other objects requires risearch 
-
+ - no caching implemented yet; working with large datastreams is very
+   inefficient and slow
 
 prerequisites:
 
  - FUSE kernel module (or other OS support)
  - Python FUSE support (python-fuse)
- - python-eulcore fedora dependencies (see eulcore/README.dependencies)
+ - eulfedora
