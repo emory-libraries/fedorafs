@@ -1,3 +1,17 @@
+FedoraFS is prototype code to expose objects in a Fedora-Commons
+repository to the filesystem using Python and FUSE.
+
+The initial version of FedoraFS was written in 2009:
+https://techknowhow.library.emory.edu/blogs/rsutton/2009/01/16/fedorafs-python-fuse
+
+That prototype code was submitted to the Open Repositories 2009
+Developer Challenge and won the runner-up prize:
+http://dev8d.jiscinvolve.org/wp/2009/05/20/repochallenge-winners/
+
+This version is a re-working of the first prototype using eulfedora
+for access to Fedora.
+
+
 How to use:
 
 ./FedoraFs.py /path/to/mountpoint
@@ -39,3 +53,4 @@ prerequisites:
  - FUSE kernel module (or other OS support)
  - Python FUSE support (python-fuse)
  - eulfedora
+ - Fedora-Commons 3.4.x
