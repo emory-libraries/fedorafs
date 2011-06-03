@@ -1,0 +1,62 @@
+FedoraFS is prototype code to expose objects in a Fedora-Commons
+repository to the filesystem using Python and FUSE.
+
+The initial version of FedoraFS was written in 2009:
+https://techknowhow.library.emory.edu/blogs/rsutton/2009/01/16/fedorafs-python-fuse
+
+That prototype code was submitted to the Open Repositories 2009
+Developer Challenge and won the runner-up prize:
+http://dev8d.jiscinvolve.org/wp/2009/05/20/repochallenge-winners/
+
+This version is a re-working of the first prototype using eulfedora
+for access to Fedora.
+
+
+How to use:
+
+./FedoraFs.py /path/to/mountpoint
+
+Can also specify fedora connection options: host, port, username, password, version
+These are all listed in the fuse help you see when you run ./FedoraFs.py -h
+
+Example usage:
+./FedoraFs.py -o base_url=http://fedora.server.edu:8080/fedora -o username=login -o password= fedora/
+
+If password is specified but blank, you will be prompted to enter a password.
+
+To unmount:
+  fusermount -u fedora/
+
+Use -d when in development to see fuse debugging output, error messages, etc.
+
+current status of implementation:
+
+  directory structure:
+    pid		(object treated as directory)
+        .info (top-level properties)
+	datastreams
+	dissemination methods
+	relations to other fedora objects (directory) 
+	   pid (symlink to top-level object)
+ 	.versions  
+	   datetime (one for each revision in object history)
+		.info (top-level properties - but not actually versioned?)
+		datastreams as of datetime
+
+ - creation/modification time set for top-level of object but little else
+   - modification time for all versioned inferred from datetime in path
+ - no caching implemented yet; working with large datastreams is very
+   inefficient and slow
+
+This is just a first-draft directory layout.  Obviously, different
+types of content or applications may need different file layouts or
+configurations.
+
+prerequisites:
+
+ - FUSE kernel module (or other OS support)
+ - Python FUSE support (python-fuse)
+ - eulfedora
+ - Fedora-Commons 3.4.x
+
+Note: python-fuse and eulfedora can be installed using easy_install or pip install
