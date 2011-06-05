@@ -9,7 +9,7 @@
 #       http://www.apache.org/licenses/LICENSE-2.0
 #
 #   Unless required by applicable law or agreed to in writing, software
-#   distributed under the License is distributed on an "AS IS" BASIS,
+#   disrtibuted under the License is distributed on an "AS IS" BASIS,
 #   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
@@ -23,7 +23,8 @@ from eulfedora.models import DigitalObject
 from eulfedora.util import parse_xml_object
 from eulfedora.xml import ObjectDatastreams
 
-class FsStat(fuse.Stat):
+#class FsStat(fuse.c_stat):
+class FsStat():
     def __init__(self):
         self.st_mode = stat.S_IFDIR | 0755
         self.st_ino = 0
@@ -36,6 +37,20 @@ class FsStat(fuse.Stat):
         self.st_mtime = 0
         self.st_ctime = 0
 
+    def as_dict(self):
+        return {'st_mode': self.st_mode,
+                'st_ino': self.st_ino,
+                'st_dev': self.st_dev,
+                'st_nlink': self.st_nlink,
+                'st_uid': self.st_uid,
+                'st_gid': self.st_gid,
+                'st_size': self.st_size,
+                'st_atime': self.st_atime,
+                'st_mtime': self.st_mtime,
+                'st_ctime': self.st_ctime}
+
+    def items(self):
+        return self.as_dict().items()
 
 class FsObject(DigitalObject):
 
@@ -237,7 +252,7 @@ class FsObject(DigitalObject):
         return members
 
     def fs_read(self, *els):
-        '''Return the content of the requested element
+        '''Retur8n the content of the requested element
         :param els: list of path elements
         '''
         if els[0] == '.info':
@@ -260,13 +275,19 @@ class FsObject(DigitalObject):
                 # 3 entries under .versions - versioned view of a datastream
                 date, dsid = els[1:]
                 # FIXME: must be a better way to get datetime back from string...
+                datetime = None
                 for dt in self.history:
+                    # FIXME: why is the date not matching?
+                    # string conversion being generated the same way as .version
+                    # listing?
+                    # TODO: perhaps define a datetime format to ensure consistency
                     if date == str(dt):
                         datetime = dt
 
-                # TODO: add caching? versioned ds content shouldn't change
-                data, url = self.api.getDatastreamDissemination(self.pid, dsid, datetime)
-                return data
+                if datetime is not None: 
+                    # TODO: add caching? versioned ds content shouldn't change
+                    data, url = self.api.getDatastreamDissemination(self.pid, dsid, datetime)
+                    return data
 
 
     def fs_write(self, dsid, data):

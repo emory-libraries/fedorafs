@@ -17,7 +17,8 @@
 #   limitations under the License.
 
 
-import fuse
+#import fuse
+import argparse
 from getpass import getpass
 import stat    
 import errno
@@ -28,8 +29,12 @@ from eulfedora.server import Repository
 
 from models import FsObject, FsStat
 
+from fuse import FUSE, Operations, LoggingMixIn
+
+# not in pypi version? FuseOSError
+
 # simplistic logging for development purposes
-LOGGING_LEVEL=logging.INFO     # NOLOG, CRITICAL, ERROR, WARNING, INFO, DEBUG
+LOGGING_LEVEL=logging.DEBUG     # NOLOG, CRITICAL, ERROR, WARNING, INFO, DEBUG
 LOGGING_FORMAT="%(levelname)s : %(message)s"
 LOGGING_FILENAME='' # STDOUT
 logging.basicConfig(level=LOGGING_LEVEL,
@@ -37,41 +42,37 @@ logging.basicConfig(level=LOGGING_LEVEL,
 logger = logging.getLogger(__name__)
 
 
-fuse.fuse_python_api = (0, 2)
 
-class FedoraFS(fuse.Fuse):
-    def __init__(self, *args, **kw):
+class FedoraFS(LoggingMixIn, Operations):
+    def __init__(self, base_url='http://localhost:8080/fedora/',
+                 username='fedoraAdmin', password='fedoraAdmin',
+                 filter=None):
         # fedora-specific configuration parameters
 	# these are the defaults; can be overridden with command-line options
-        self.base_url = 'http://localhost:8080/fedora/'
-        self.username = 'fedoraAdmin'
-        self.password = 'fedoraAdmin'
-        self.filter = None
+
+        # eulcore.fedora.sever requries base_url with a trailing slash
+        if not base_url.endswith('/'):
+            base_url = '%s/' % base_url
+
+        self.base_url = base_url
+        self.username = username
+        self.password = password
+        self.filter = filter
+        print "DEBUG: filter is ", filter
 
         self.towrite = {}
 
-        fuse.Fuse.__init__(self, *args, **kw)
         self._members = None
         self.files = {}
         self.lastfiles = {}
         self.objects = {}
 
-    def main(self, args=None):
-        # initialize fedora connection AFTER command line options have been parsed
-
-        # eulcore.fedora.sever requries base_url with a trailing slash
-        if not self.base_url.endswith('/'):
-            self.base_url = '%s/' % self.base_url
-
-        # if there is a username and an *empty* password, prompt user
-        if self.username and not self.password:
-            self.password = getpass()
         # TODO: support netrc for credentials?
         # TODO: catch invalid credentials!! (don't retry if invalid)
-            
+
+        # initialize connection to the repository
         self.repo = Repository(self.base_url, self.username, self.password)
         self.repo.default_object_type = FsObject
-        fuse.Fuse.main(self, args)
 
     @property
     def members(self):
@@ -87,7 +88,7 @@ class FedoraFS(fuse.Fuse):
                     self._members[obj.pid] = obj
         return self._members
 
-    def getattr(self, path):        
+    def getattr(self, path, fh=None):
         path_els = path.strip('/').split('/')
         logger.debug('getattr for path %s - path elements are %s' % (path, path_els))
         st = FsStat()	 # access time defaults to now
@@ -98,14 +99,14 @@ class FedoraFS(fuse.Fuse):
             # make sure pid list is up-to-date before calculating
             logger.debug('members are %s, count is %s' % (self.members, len(self.members.keys())))
             st.st_nlink = 2 + len(self.members.keys())
-            return st
+            return st.as_dict()
         else:
             if path_els[0] in self.members:
                 return self.members[path_els[0]].fs_attr(*path_els[1:])
             else:
-                return None     # ??
+                return {}     # ??
             #st.st_mode = stat.S_IFREG | 0444
-        return st
+        return st.as_dict()
 
     def readdir (self, path, offset):
         dir_entries = [ '.', '..' ]
@@ -122,28 +123,35 @@ class FedoraFS(fuse.Fuse):
 
         logger.debug('dir entries for %s are %s' % (path, dir_entries))
         for r in dir_entries:
-            yield fuse.Direntry(r)
+            yield r
+            #yield fuse.Direntry(r)
 
-    def read(self, path, size, offset):
-        logger.debug('read path=%s, size=%s, offset=%s' % (path, size, offset))
+    def read(self, path, size, offset, fh):
+        logger.debug('read path=%s, size=%s, offset=%s fh=%s' % \
+                     (path, size, offset, fh))
         path_els = path.strip('/').split('/')
 
         # FIXME: not very efficient
         if path_els[0] in self.members:
             str = self.members[path_els[0]].fs_read(*path_els[1:])
 
-        slen = len(str)
-        if offset < slen:
-            if offset + size > slen:
-               size = slen - offset
-            buf = str[offset:offset+size]
-        else:
-            buf = ''
-        return buf
+        if str is not None:
+            slen = len(str)
+            if offset < slen:
+                if offset + size > slen:
+                    size = slen - offset
+                buf = str[offset:offset+size]
+            else:
+                buf = ''
+            return buf
 
-    def write(self, path, buf, offset):
+    def write(self, path, data, offset, fh):
+        # TODO: fusepy adds fh, what is it used for?
         path_els = path.strip('/').split('/')
-        logger.debug('write: offset %s, buf: %s' % (offset, buf))        
+        logger.debug('write: path: %s data: %s offset: %s, fh: %s' % \
+                     (path, data, offset, fh))
+        # use data as the buffer to be written
+        buf = data
          
         # currently only expect to be writing datastreams
         if len(path_els) == 2 and path_els[0] in self.members and \
@@ -161,7 +169,9 @@ class FedoraFS(fuse.Fuse):
             # attempting to write somtehing we don't handle
             return -errno.ENOSYS            
 
-    def fsync(self, path, isfsyncfile):
+    def fsync(self, path, datasync, fh):
+        #def fsync(self, path, isfsyncfile):
+        
         # FIXME: what does isfsyncfile do ?
         # actually write the contents to fedora
 
@@ -229,23 +239,41 @@ class FedoraFS(fuse.Fuse):
 def main():
     usage="""
     FedoraFS: A filesystem to access content in a Fedora repository.
-    """ + fuse.Fuse.fusage
+    """
 
-    server = FedoraFS(version="%prog " + fuse.__version__,
-                      usage=usage, dash_s_do='setsingle')
 
-    # fedora-specific mount options
-    ## FIXME: could maybe use add_option_group function?
-    server.parser.add_option(mountopt="base_url", metavar="BASE_URL", default=server.base_url,
-                             help="fedora base url [default: %default]")    
-    server.parser.add_option(mountopt="username", metavar="USER", default=server.username,
-                             help="fedora user [default: %default]")
-    server.parser.add_option(mountopt="password", metavar="PASSWORD", default=server.password,
-                             help="fedora password [default: %default]")
-    server.parser.add_option(mountopt="filter", metavar="FILTER", default=None,
-                             help="keyword search filter for fedora objects to retrieve")
-    server.parse(values=server, errex=1)
-    server.main()
+    parser = argparse.ArgumentParser(description=usage)
+    parser.add_argument('--base_url', metavar='BASE_URL',
+                   help='fedora base url')
+    parser.add_argument('--username', metavar='USER',
+                   help='fedora username')
+    parser.add_argument('--password', metavar='PASSWORD',
+                   help='fedora password')
+    parser.add_argument('--filter', metavar='FILTER',
+                   help='keyword search filter for fedora objects to retrieve')
+    parser.add_argument('mountpoint',
+                   help='local mount point')
+    args = parser.parse_args()
+
+    fuse = FUSE(FedoraFS(base_url=args.base_url, username=args.username,
+                         password=args.password, filter=args.filter),
+                args.mountpoint, foreground=True)
+
+    # server = FedoraFS(version="%prog " + fuse.__version__,
+    #                   usage=usage, dash_s_do='setsingle')
+
+    # # fedora-specific mount options
+    # ## FIXME: could maybe use add_option_group function?
+    # server.parser.add_option(mountopt="base_url", metavar="BASE_URL", default=server.base_url,
+    #                          help="fedora base url [default: %default]")    
+    # server.parser.add_option(mountopt="username", metavar="USER", default=server.username,
+    #                          help="fedora user [default: %default]")
+    # server.parser.add_option(mountopt="password", metavar="PASSWORD", default=server.password,
+    #                          help="fedora password [default: %default]")
+    # server.parser.add_option(mountopt="filter", metavar="FILTER", default=None,
+    #                          help="keyword search filter for fedora objects to retrieve")
+    # server.parse(values=server, errex=1)
+    # server.main()
 
 if __name__ == '__main__':
     main()

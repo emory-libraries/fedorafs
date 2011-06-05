@@ -60,3 +60,11 @@ prerequisites:
  - Fedora-Commons 3.4.x
 
 Note: python-fuse and eulfedora can be installed using easy_install or pip install
+
+
+Alternate branch for fusepy, which should work with macfuse or linux fuse
+new start command should look something like this:
+./FedoraFs.py --base_url=http://dev11.library.emory.edu:8580/fedora fedora/
+
+
+
